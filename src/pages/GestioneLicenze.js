@@ -28,7 +28,10 @@ export default function GestioneLicenze({ onLogout }) {
   const [cercaLoading, setCercaLoading] = useState(false)
   const [cercaErrore, setCercaErrore] = useState(null)
   const [utenteTrovato, setUtenteTrovato] = useState(null) // profilo trovato per il nuovo gestore
+  const [preRegistrazione, setPreRegistrazione] = useState(false) // email non ancora registrata, si procede comunque
+  const [nonTrovato, setNonTrovato] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [inviata, setInviata] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setErrore(null)
@@ -55,10 +58,12 @@ export default function GestioneLicenze({ onLogout }) {
   function apriNuovo() {
     setModal('nuovo'); setForm(FORM_VUOTO)
     setEmailCerca(''); setUtenteTrovato(null); setCercaErrore(null)
+    setPreRegistrazione(false); setInviata(false); setNonTrovato(false)
   }
 
   function apriModifica(g) {
     setModal(g)
+    setPreRegistrazione(false); setInviata(false); setUtenteTrovato(null); setNonTrovato(false)
     setForm({
       ragione_sociale: g.ragione_sociale || '', email: g.email || '',
       piano: g.piano || 'base', stato: g.stato || 'attivo',
@@ -70,15 +75,26 @@ export default function GestioneLicenze({ onLogout }) {
 
   async function cercaUtente() {
     if (!emailCerca.trim()) return
-    setCercaLoading(true); setCercaErrore(null); setUtenteTrovato(null)
+    setCercaLoading(true); setCercaErrore(null); setUtenteTrovato(null); setPreRegistrazione(false); setNonTrovato(false)
     const { data, error } = await supabase.from('profili')
       .select('id, nome, email').ilike('email', emailCerca.trim()).maybeSingle()
     setCercaLoading(false)
     if (error) { setCercaErrore(error.message); return }
-    if (!data) { setCercaErrore('Nessun utente registrato nel Toolkit con questa email. Deve prima accedere almeno una volta.'); return }
-    if (gestori.some(g => g.user_id === data.id)) { setCercaErrore('Questo utente ha già un account gestore.'); return }
+    if (gestori.some(g => (g.email || '').toLowerCase() === emailCerca.trim().toLowerCase())) {
+      setCercaErrore('Esiste già un account gestore (attivo o in attesa) con questa email.'); return
+    }
+    if (!data) {
+      setCercaErrore('Nessun utente registrato nel Toolkit con questa email. Puoi comunque pre-registrarlo e invitarlo via email.')
+      setNonTrovato(true)
+      return
+    }
     setUtenteTrovato(data)
     setForm(f => ({ ...f, ragione_sociale: data.nome || '', email: data.email || '' }))
+  }
+
+  function preRegistra() {
+    setPreRegistrazione(true)
+    setForm(f => ({ ...f, email: emailCerca.trim() }))
   }
 
   async function salva() {
@@ -96,14 +112,25 @@ export default function GestioneLicenze({ onLogout }) {
       note: form.note.trim() || null,
     }
     let err
-    if (modal === 'nuovo') {
-      if (!utenteTrovato) { setSaving(false); return }
+    if (modal === 'nuovo' && utenteTrovato) {
       ;({ error: err } = await supabase.from('gestori').insert({ ...payload, user_id: utenteTrovato.id }))
+    } else if (modal === 'nuovo' && preRegistrazione) {
+      ;({ error: err } = await supabase.from('gestori').insert(payload)) // user_id resta null: verrà collegato alla registrazione
+      if (!err) {
+        const { error: eInvito } = await supabase.functions.invoke('invita-gestore', {
+          body: { email: payload.email, ragione_sociale: payload.ragione_sociale },
+        })
+        if (eInvito) { setErrore('Gestore creato, ma invio invito fallito: ' + eInvito.message); setSaving(false); load(); return }
+        setInviata(true)
+      }
+    } else if (modal === 'nuovo') {
+      setSaving(false); return
     } else {
       ;({ error: err } = await supabase.from('gestori').update(payload).eq('id', modal.id))
     }
     setSaving(false)
     if (err) { setErrore(err.message); return }
+    if (preRegistrazione) return // resta aperto sul messaggio di conferma invio
     setModal(null); load()
   }
 
@@ -143,7 +170,10 @@ export default function GestioneLicenze({ onLogout }) {
                       <td style={{ fontWeight: 600 }}>{g.ragione_sociale || '—'}</td>
                       <td style={{ fontSize: 12.5, color: '#666' }}>{g.email || '—'}</td>
                       <td>{g.piano || '—'}</td>
-                      <td><span className="badge" style={{ background: st.background, color: st.color }}>{g.stato}</span></td>
+                      <td>
+                        <span className="badge" style={{ background: st.background, color: st.color }}>{g.stato}</span>
+                        {!g.user_id && <span className="badge" style={{ background: '#EAF2FC', color: '#2B5FA5', marginLeft: 4 }}>in attesa</span>}
+                      </td>
                       <td style={{ fontSize: 12.5 }} title={aziende.map(a => a.nome).join(', ')}>
                         {aziende.length}{g.max_aziende != null ? ` / ${g.max_aziende}` : ''}
                       </td>
@@ -171,20 +201,31 @@ export default function GestioneLicenze({ onLogout }) {
               <button className="btn btn-icon" onClick={() => setModal(null)}>✕</button>
             </div>
 
-            {modal === 'nuovo' && !utenteTrovato && (
+            {modal === 'nuovo' && !utenteTrovato && !preRegistrazione && (
               <div style={{ marginBottom: 16 }}>
                 <div className="form-group">
-                  <label className="form-label">Email dell'utente già registrato nel Toolkit</label>
+                  <label className="form-label">Email del nuovo gestore</label>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <input className="form-control" type="email" value={emailCerca} onChange={e => setEmailCerca(e.target.value)} placeholder="cliente@esempio.it" />
                     <button className="btn btn-primary" onClick={cercaUtente} disabled={cercaLoading}>{cercaLoading ? '…' : 'Cerca'}</button>
                   </div>
                 </div>
-                {cercaErrore && <div className="alert alert-error">{cercaErrore}</div>}
+                {cercaErrore && <div className={`alert alert-${nonTrovato ? 'info' : 'error'}`}>{cercaErrore}</div>}
+                {nonTrovato && (
+                  <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={preRegistra}>
+                    ✉️ Pre-registra questa email e invia invito
+                  </button>
+                )}
               </div>
             )}
 
-            {(modal !== 'nuovo' || utenteTrovato) && (
+            {inviata && (
+              <div className="alert alert-success">
+                Invito inviato a <strong>{form.email}</strong>. Il gestore è già pre-configurato: appena si registra con questa email, il suo account verrà collegato automaticamente.
+              </div>
+            )}
+
+            {!inviata && (modal !== 'nuovo' || utenteTrovato || preRegistrazione) && (
               <>
                 <div className="form-group">
                   <label className="form-label">Ragione sociale</label>
@@ -233,9 +274,16 @@ export default function GestioneLicenze({ onLogout }) {
                 {errore && <div className="alert alert-error">{errore}</div>}
                 <div className="modal-footer">
                   <button className="btn" onClick={() => setModal(null)} disabled={saving}>Annulla</button>
-                  <button className="btn btn-primary" onClick={salva} disabled={saving}>{saving ? 'Salvataggio...' : 'Salva'}</button>
+                  <button className="btn btn-primary" onClick={salva} disabled={saving}>
+                    {saving ? 'Salvataggio...' : preRegistrazione ? '✉️ Crea e invia invito' : 'Salva'}
+                  </button>
                 </div>
               </>
+            )}
+            {inviata && (
+              <div className="modal-footer">
+                <button className="btn btn-primary" onClick={() => setModal(null)}>Chiudi</button>
+              </div>
             )}
           </div>
         </div>
