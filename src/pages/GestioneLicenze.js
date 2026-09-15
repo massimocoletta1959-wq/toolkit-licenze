@@ -10,6 +10,8 @@ const STATO_STYLE = {
   cessato: { background: '#FADBD8', color: '#C0392B' },
 }
 
+const EMAIL_VALIDA = e => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test((e || '').trim())
+
 const FORM_VUOTO = {
   ragione_sociale: '', email: '', piano: 'amici', stato: 'attivo',
   max_aziende: 2, incl_rischi: true, incl_procedure: true, incl_governance: true,
@@ -32,6 +34,8 @@ export default function GestioneLicenze({ onLogout }) {
   const [nonTrovato, setNonTrovato] = useState(false)
   const [saving, setSaving] = useState(false)
   const [inviata, setInviata] = useState(false)
+  const [rinviando, setRinviando] = useState(null) // id del gestore a cui si sta rinviando l'invito
+  const [rinviatoId, setRinviatoId] = useState(null) // id del gestore a cui è appena stato rinviato con successo
 
   const load = useCallback(async () => {
     setLoading(true); setErrore(null)
@@ -75,7 +79,9 @@ export default function GestioneLicenze({ onLogout }) {
 
   async function cercaUtente() {
     if (!emailCerca.trim()) return
-    setCercaLoading(true); setCercaErrore(null); setUtenteTrovato(null); setPreRegistrazione(false); setNonTrovato(false)
+    setCercaErrore(null); setUtenteTrovato(null); setPreRegistrazione(false); setNonTrovato(false)
+    if (!EMAIL_VALIDA(emailCerca)) { setCercaErrore('Indirizzo email non valido: controlla che sia scritto correttamente (es. nome@dominio.it).'); return }
+    setCercaLoading(true)
     const { data, error } = await supabase.from('profili')
       .select('id, nome, email').ilike('email', emailCerca.trim()).maybeSingle()
     setCercaLoading(false)
@@ -98,6 +104,10 @@ export default function GestioneLicenze({ onLogout }) {
   }
 
   async function salva() {
+    if (form.email.trim() && !EMAIL_VALIDA(form.email)) {
+      setErrore('Indirizzo email non valido: controlla che sia scritto correttamente (es. nome@dominio.it).')
+      return
+    }
     setSaving(true); setErrore(null)
     const payload = {
       ragione_sociale: form.ragione_sociale.trim() || null,
@@ -132,6 +142,17 @@ export default function GestioneLicenze({ onLogout }) {
     if (err) { setErrore(err.message); return }
     if (preRegistrazione) return // resta aperto sul messaggio di conferma invio
     setModal(null); load()
+  }
+
+  async function rinviaInvito(g) {
+    setRinviando(g.id); setErrore(null)
+    const { error } = await supabase.functions.invoke('invita-gestore', {
+      body: { email: g.email, ragione_sociale: g.ragione_sociale },
+    })
+    setRinviando(null)
+    if (error) { setErrore('Invio invito fallito: ' + error.message); return }
+    setRinviatoId(g.id)
+    setTimeout(() => setRinviatoId(null), 4000)
   }
 
   return (
@@ -181,7 +202,12 @@ export default function GestioneLicenze({ onLogout }) {
                         {[g.incl_rischi && 'Rischi', g.incl_procedure && 'Procedure', g.incl_governance && 'Governance'].filter(Boolean).join(', ') || '—'}
                       </td>
                       <td style={{ fontSize: 12.5 }}>{g.data_scadenza ? new Date(g.data_scadenza).toLocaleDateString('it-IT') : '—'}</td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {!g.user_id && (
+                          <button className="btn btn-sm" onClick={() => rinviaInvito(g)} disabled={rinviando === g.id} style={{ marginRight: 6 }}>
+                            {rinviando === g.id ? '…' : rinviatoId === g.id ? '✓ Inviato' : '✉️ Rinvia invito'}
+                          </button>
+                        )}
                         <button className="btn btn-sm" onClick={() => apriModifica(g)}>Modifica</button>
                       </td>
                     </tr>
