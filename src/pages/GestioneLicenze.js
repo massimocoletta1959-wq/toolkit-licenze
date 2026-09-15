@@ -155,6 +155,23 @@ export default function GestioneLicenze({ onLogout }) {
     setTimeout(() => setRinviatoId(null), 4000)
   }
 
+  async function toggleBlocco(g) {
+    const nuovoStato = g.stato === 'sospeso' ? 'attivo' : 'sospeso'
+    setErrore(null)
+    const { error } = await supabase.from('gestori').update({ stato: nuovoStato }).eq('id', g.id)
+    if (error) { setErrore(error.message); return }
+    load()
+  }
+
+  async function eliminaGestore(g) {
+    const nome = g.ragione_sociale || g.email || 'questo gestore'
+    if (!window.confirm(`Eliminare definitivamente ${nome}?\n\nNon elimina il suo account Toolkit né le sue aziende, ma rimuove la licenza: se aveva già effettuato il login, da questo momento non potrà più accedere. L'operazione non è reversibile.`)) return
+    setErrore(null)
+    const { error } = await supabase.from('gestori').delete().eq('id', g.id)
+    if (error) { setErrore(error.message); return }
+    load()
+  }
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
@@ -208,7 +225,11 @@ export default function GestioneLicenze({ onLogout }) {
                             {rinviando === g.id ? '…' : rinviatoId === g.id ? '✓ Inviato' : '✉️ Rinvia invito'}
                           </button>
                         )}
-                        <button className="btn btn-sm" onClick={() => apriModifica(g)}>Modifica</button>
+                        <button className="btn btn-sm" onClick={() => toggleBlocco(g)} style={{ marginRight: 6 }}>
+                          {g.stato === 'sospeso' ? '✓ Riattiva' : '🔒 Blocca'}
+                        </button>
+                        <button className="btn btn-sm" onClick={() => apriModifica(g)} style={{ marginRight: 6 }}>Modifica</button>
+                        <button className="btn btn-sm btn-danger" onClick={() => eliminaGestore(g)}>🗑️ Elimina</button>
                       </td>
                     </tr>
                   )
