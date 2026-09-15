@@ -160,7 +160,7 @@ export default function GestioneLicenze({ onLogout }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>🔑 Gestione Licenze</h2>
-          <p style={{ color: '#666', fontSize: 13.5 }}>Toolkit Rischio 360° — area riservata</p>
+          <p style={{ color: '#666', fontSize: 13.5 }}>Toolkit Pmi 360° — area riservata</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" onClick={apriNuovo}>+ Nuovo gestore</button>

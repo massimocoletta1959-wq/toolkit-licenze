@@ -21,7 +21,7 @@ export default function Login() {
         <div className="login-logo">
           <div style={{ fontSize: 40, marginBottom: 8 }}>🔑</div>
           <h1>Gestione Licenze</h1>
-          <p>Toolkit Rischio 360° — area riservata</p>
+          <p>Toolkit Pmi 360° — area riservata</p>
         </div>
         {errore && <div className="alert alert-error">{errore}</div>}
         <form onSubmit={handleSubmit}>
