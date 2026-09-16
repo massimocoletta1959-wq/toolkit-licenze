@@ -22,7 +22,8 @@ export default function GestioneLicenze({ onLogout }) {
   const [gestori, setGestori] = useState([])
   const [aziendePerGestore, setAziendePerGestore] = useState({}) // user_id -> [{id,nome,_linkId}]
   const [preassegnazioniPerGestore, setPreassegnazioniPerGestore] = useState({}) // gestore_id -> [{id,nome,_linkId}], per chi non si è ancora registrato
-  const [aziendeLibere, setAziendeLibere] = useState([]) // aziende create in anticipo, non ancora assegnate a nessuno
+  const [tutteAziende, setTutteAziende] = useState([]) // tutte le aziende esistenti, candidate per l'assegnazione
+  const [etichettaAzienda, setEtichettaAzienda] = useState({}) // azienda_id -> nome di chi la ha già (per non assegnarla per errore due volte)
   const [loading, setLoading] = useState(true)
   const [errore, setErrore] = useState(null)
 
@@ -51,6 +52,7 @@ export default function GestioneLicenze({ onLogout }) {
     ])
     if (eG) { setErrore(eG.message); setLoading(false); return }
     setGestori(g || [])
+    setTutteAziende(az || [])
     const aziendeById = Object.fromEntries((az || []).map(a => [a.id, a]))
     const mappa = {}
     ;(ua || []).forEach(r => {
@@ -69,10 +71,21 @@ export default function GestioneLicenze({ onLogout }) {
       if (a) mappaPre[r.gestore_id].push({ id: a.id, nome: a.nome, _linkId: r.id })
     })
     setPreassegnazioniPerGestore(mappaPre)
-    // Aziende create in anticipo (es. dallo Studio) e non ancora assegnate a nessun
-    // gestore (né registrato né in attesa): sono i candidati per una nuova assegnazione.
-    const collegate = new Set([...(ua || []).map(r => r.azienda_id), ...(pre || []).map(r => r.azienda_id)])
-    setAziendeLibere((az || []).filter(a => !collegate.has(a.id)))
+    // Un'azienda spesso viene prima creata e configurata dallo Studio con il proprio
+    // account, e solo dopo assegnata al gestore del cliente: non è quindi "libera" in
+    // senso stretto. Qui teniamo solo un'etichetta di chi la ha già, per scegliere con
+    // consapevolezza quando la si assegna anche a un altro gestore.
+    const gestoreByUserId = Object.fromEntries((g || []).filter(x => x.user_id).map(x => [x.user_id, x.ragione_sociale || x.email || 'gestore']))
+    const etichette = {}
+    ;(ua || []).forEach(r => {
+      const lab = gestoreByUserId[r.utente_id]
+      if (lab) etichette[r.azienda_id] = lab
+    })
+    ;(pre || []).forEach(r => {
+      const gg = (g || []).find(x => x.id === r.gestore_id)
+      if (gg) etichette[r.azienda_id] = (gg.ragione_sociale || gg.email || 'gestore') + ' (in attesa di registrarsi)'
+    })
+    setEtichettaAzienda(etichette)
     setLoading(false)
   }, [])
 
@@ -344,7 +357,9 @@ export default function GestioneLicenze({ onLogout }) {
                     <label className="form-label">Azienda già creata da assegnargli (opzionale)</label>
                     <select className="form-control" value={aziendaScelta} onChange={e => setAziendaScelta(e.target.value)}>
                       <option value="">— Nessuna: la creerà lui dal wizard —</option>
-                      {aziendeLibere.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                      {tutteAziende.map(a => (
+                        <option key={a.id} value={a.id}>{a.nome}{etichettaAzienda[a.id] ? ` — già di: ${etichettaAzienda[a.id]}` : ''}</option>
+                      ))}
                     </select>
                     <p style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>
                       Se l'azienda è già stata preparata in anticipo, il gestore la vedrà appena si registra con questa email, senza passare dal wizard. Se gliene servono altre, puoi assegnargliele in seguito da "Modifica".
@@ -357,7 +372,7 @@ export default function GestioneLicenze({ onLogout }) {
                   const limite = form.max_aziende === '' ? null : Number(form.max_aziende)
                   const limiteRaggiunto = limite != null && assegnate.length >= limite
                   const scelte = new Set(assegnate.map(a => a.id))
-                  const disponibili = aziendeLibere.filter(a => !scelte.has(a.id))
+                  const disponibili = tutteAziende.filter(a => !scelte.has(a.id))
                   return (
                     <div className="form-group">
                       <label className="form-label">Aziende assegnate ({assegnate.length}{limite != null ? ` / ${limite}` : ''})</label>
@@ -373,8 +388,10 @@ export default function GestioneLicenze({ onLogout }) {
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <select className="form-control" value={aziendaScelta} onChange={e => setAziendaScelta(e.target.value)} disabled={limiteRaggiunto}>
-                          <option value="">— Scegli un'azienda libera —</option>
-                          {disponibili.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                          <option value="">— Scegli un'azienda —</option>
+                          {disponibili.map(a => (
+                            <option key={a.id} value={a.id}>{a.nome}{etichettaAzienda[a.id] ? ` — già di: ${etichettaAzienda[a.id]}` : ''}</option>
+                          ))}
                         </select>
                         <button className="btn btn-sm" onClick={assegnaAzienda} disabled={!aziendaScelta || limiteRaggiunto || assegnando}>
                           {assegnando ? '…' : '+ Assegna'}
