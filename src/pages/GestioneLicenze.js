@@ -15,12 +15,13 @@ const EMAIL_VALIDA = e => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test((e || '').trim())
 const FORM_VUOTO = {
   ragione_sociale: '', email: '', piano: 'amici', stato: 'attivo',
   max_aziende: 2, incl_rischi: true, incl_procedure: true, incl_governance: true,
-  data_scadenza: '', note: '',
+  data_scadenza: '', note: '', azienda_preassegnata_id: '',
 }
 
 export default function GestioneLicenze({ onLogout }) {
   const [gestori, setGestori] = useState([])
   const [aziendePerGestore, setAziendePerGestore] = useState({}) // user_id -> [{id,nome}]
+  const [aziendeLibere, setAziendeLibere] = useState([]) // aziende create in anticipo, non ancora collegate a nessun utente
   const [loading, setLoading] = useState(true)
   const [errore, setErrore] = useState(null)
 
@@ -54,6 +55,10 @@ export default function GestioneLicenze({ onLogout }) {
       if (a) mappa[r.utente_id].push(a)
     })
     setAziendePerGestore(mappa)
+    // Aziende create in anticipo (es. dallo Studio) e non ancora collegate a nessun
+    // utente: sono i candidati per l'assegnazione a un nuovo gestore da invitare.
+    const collegate = new Set((ua || []).map(r => r.azienda_id))
+    setAziendeLibere((az || []).filter(a => !collegate.has(a.id)))
     setLoading(false)
   }, [])
 
@@ -74,6 +79,7 @@ export default function GestioneLicenze({ onLogout }) {
       max_aziende: g.max_aziende ?? '', incl_rischi: !!g.incl_rischi,
       incl_procedure: !!g.incl_procedure, incl_governance: !!g.incl_governance,
       data_scadenza: g.data_scadenza || '', note: g.note || '',
+      azienda_preassegnata_id: g.azienda_preassegnata_id || '',
     })
   }
 
@@ -120,6 +126,7 @@ export default function GestioneLicenze({ onLogout }) {
       incl_governance: form.incl_governance,
       data_scadenza: form.data_scadenza || null,
       note: form.note.trim() || null,
+      azienda_preassegnata_id: form.azienda_preassegnata_id || null,
     }
     let err
     if (modal === 'nuovo' && utenteTrovato) {
@@ -282,6 +289,19 @@ export default function GestioneLicenze({ onLogout }) {
                   <label className="form-label">Email</label>
                   <input className="form-control" value={form.email} disabled={modal === 'nuovo'} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
                 </div>
+                {(modal === 'nuovo' ? preRegistrazione : !modal.user_id) && (
+                  <div className="form-group">
+                    <label className="form-label">Azienda già creata da assegnargli (opzionale)</label>
+                    <select className="form-control" value={form.azienda_preassegnata_id}
+                      onChange={e => setForm(f => ({ ...f, azienda_preassegnata_id: e.target.value }))}>
+                      <option value="">— Nessuna: la creerà lui dal wizard —</option>
+                      {aziendeLibere.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                    </select>
+                    <p style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>
+                      Se l'azienda è già stata preparata in anticipo, il gestore la vedrà appena si registra con questa email, senza passare dal wizard.
+                    </p>
+                  </div>
+                )}
                 <div className="grid-2">
                   <div className="form-group">
                     <label className="form-label">Piano</label>
