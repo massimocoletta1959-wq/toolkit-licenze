@@ -40,15 +40,16 @@ export default function GestioneLicenze({ onLogout }) {
   const [rinviando, setRinviando] = useState(null) // id del gestore a cui si sta rinviando l'invito
   const [rinviatoId, setRinviatoId] = useState(null) // id del gestore a cui è appena stato rinviato con successo
   const [aziendaScelta, setAziendaScelta] = useState('') // azienda selezionata nel picker (creazione o assegnazione)
+  const [moduliScelta, setModuliScelta] = useState({ rischi: true, procedure: true, governance: true }) // moduli da concedere sulla nuova assegnazione
   const [assegnando, setAssegnando] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setErrore(null)
     const [{ data: g, error: eG }, { data: ua }, { data: az }, { data: pre }] = await Promise.all([
       supabase.from('gestori').select('*').order('ragione_sociale'),
-      supabase.from('utente_aziende').select('id, utente_id, azienda_id'),
+      supabase.from('utente_aziende').select('id, utente_id, azienda_id, mod_rischi, mod_procedure, mod_governance'),
       supabase.from('aziende').select('id, nome'),
-      supabase.from('gestori_preassegnazioni').select('id, gestore_id, azienda_id'),
+      supabase.from('gestori_preassegnazioni').select('id, gestore_id, azienda_id, mod_rischi, mod_procedure, mod_governance'),
     ])
     if (eG) { setErrore(eG.message); setLoading(false); return }
     setGestori(g || [])
@@ -58,7 +59,7 @@ export default function GestioneLicenze({ onLogout }) {
     ;(ua || []).forEach(r => {
       if (!mappa[r.utente_id]) mappa[r.utente_id] = []
       const a = aziendeById[r.azienda_id]
-      if (a) mappa[r.utente_id].push({ id: a.id, nome: a.nome, _linkId: r.id })
+      if (a) mappa[r.utente_id].push({ id: a.id, nome: a.nome, _linkId: r.id, mod_rischi: r.mod_rischi, mod_procedure: r.mod_procedure, mod_governance: r.mod_governance })
     })
     setAziendePerGestore(mappa)
     // Aziende già assegnate (o pre-assegnate) a un gestore, ma il cui account non è
@@ -68,7 +69,7 @@ export default function GestioneLicenze({ onLogout }) {
     ;(pre || []).forEach(r => {
       if (!mappaPre[r.gestore_id]) mappaPre[r.gestore_id] = []
       const a = aziendeById[r.azienda_id]
-      if (a) mappaPre[r.gestore_id].push({ id: a.id, nome: a.nome, _linkId: r.id })
+      if (a) mappaPre[r.gestore_id].push({ id: a.id, nome: a.nome, _linkId: r.id, mod_rischi: r.mod_rischi, mod_procedure: r.mod_procedure, mod_governance: r.mod_governance })
     })
     setPreassegnazioniPerGestore(mappaPre)
     // Un'azienda spesso viene prima creata e configurata dallo Studio con il proprio
@@ -95,13 +96,14 @@ export default function GestioneLicenze({ onLogout }) {
     setModal('nuovo'); setForm(FORM_VUOTO)
     setEmailCerca(''); setUtenteTrovato(null); setCercaErrore(null)
     setPreRegistrazione(false); setInviata(false); setNonTrovato(false)
-    setAziendaScelta('')
+    setAziendaScelta(''); setModuliScelta({ rischi: true, procedure: true, governance: true })
   }
 
   function apriModifica(g) {
     setModal(g)
     setPreRegistrazione(false); setInviata(false); setUtenteTrovato(null); setNonTrovato(false)
     setAziendaScelta('')
+    setModuliScelta({ rischi: !!g.incl_rischi, procedure: !!g.incl_procedure, governance: !!g.incl_governance })
     setForm({
       ragione_sociale: g.ragione_sociale || '', email: g.email || '',
       piano: g.piano || 'base', stato: g.stato || 'attivo',
@@ -155,18 +157,19 @@ export default function GestioneLicenze({ onLogout }) {
       data_scadenza: form.data_scadenza || null,
       note: form.note.trim() || null,
     }
+    const moduli = { mod_rischi: moduliScelta.rischi, mod_procedure: moduliScelta.procedure, mod_governance: moduliScelta.governance }
     let err
     if (modal === 'nuovo' && utenteTrovato) {
       ;({ error: err } = await supabase.from('gestori').insert({ ...payload, user_id: utenteTrovato.id }))
       if (!err && aziendaScelta) {
-        const { error: e2 } = await supabase.from('utente_aziende').insert({ utente_id: utenteTrovato.id, azienda_id: aziendaScelta })
+        const { error: e2 } = await supabase.from('utente_aziende').insert({ utente_id: utenteTrovato.id, azienda_id: aziendaScelta, ...moduli })
         if (e2) { setErrore('Gestore creato, ma assegnazione azienda non riuscita: ' + e2.message); setSaving(false); load(); return }
       }
     } else if (modal === 'nuovo' && preRegistrazione) {
       const { data: nuovo, error: e1 } = await supabase.from('gestori').insert(payload).select().single() // user_id resta null: verrà collegato alla registrazione
       err = e1
       if (!err && aziendaScelta) {
-        const { error: e2 } = await supabase.from('gestori_preassegnazioni').insert({ gestore_id: nuovo.id, azienda_id: aziendaScelta })
+        const { error: e2 } = await supabase.from('gestori_preassegnazioni').insert({ gestore_id: nuovo.id, azienda_id: aziendaScelta, ...moduli })
         if (e2) { setErrore('Gestore creato, ma assegnazione azienda non riuscita: ' + e2.message); setSaving(false); load(); return }
       }
       if (!err) {
@@ -193,10 +196,11 @@ export default function GestioneLicenze({ onLogout }) {
   async function assegnaAzienda() {
     if (!aziendaScelta || modal === 'nuovo') return
     setAssegnando(true); setErrore(null)
+    const moduli = { mod_rischi: moduliScelta.rischi, mod_procedure: moduliScelta.procedure, mod_governance: moduliScelta.governance }
     const tabella = modal.user_id ? 'utente_aziende' : 'gestori_preassegnazioni'
     const riga = modal.user_id
-      ? { utente_id: modal.user_id, azienda_id: aziendaScelta }
-      : { gestore_id: modal.id, azienda_id: aziendaScelta }
+      ? { utente_id: modal.user_id, azienda_id: aziendaScelta, ...moduli }
+      : { gestore_id: modal.id, azienda_id: aziendaScelta, ...moduli }
     const { error } = await supabase.from(tabella).insert(riga)
     setAssegnando(false)
     if (error) { setErrore(error.message); return }
@@ -210,6 +214,16 @@ export default function GestioneLicenze({ onLogout }) {
     setErrore(null)
     const tabella = modal.user_id ? 'utente_aziende' : 'gestori_preassegnazioni'
     const { error } = await supabase.from(tabella).delete().eq('id', a._linkId)
+    if (error) { setErrore(error.message); return }
+    load()
+  }
+
+  // Cambia al volo un modulo su un'assegnazione già esistente (es. per correggerla
+  // dopo che è stata creata con un altro criterio, come nel caso dell'hotel).
+  async function aggiornaModuloAssegnazione(a, campo, valore) {
+    setErrore(null)
+    const tabella = modal.user_id ? 'utente_aziende' : 'gestori_preassegnazioni'
+    const { error } = await supabase.from(tabella).update({ [campo]: valore }).eq('id', a._linkId)
     if (error) { setErrore(error.message); return }
     load()
   }
@@ -361,6 +375,15 @@ export default function GestioneLicenze({ onLogout }) {
                         <option key={a.id} value={a.id}>{a.nome}{etichettaAzienda[a.id] ? ` — già di: ${etichettaAzienda[a.id]}` : ''}</option>
                       ))}
                     </select>
+                    {aziendaScelta && (
+                      <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+                        {[['rischi', 'Rischi'], ['procedure', 'Procedure'], ['governance', 'Governance']].filter(([k]) => form['incl_' + k]).map(([k, l]) => (
+                          <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={moduliScelta[k]} onChange={e => setModuliScelta(m => ({ ...m, [k]: e.target.checked }))} /> {l}
+                          </label>
+                        ))}
+                      </div>
+                    )}
                     <p style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>
                       Se l'azienda è già stata preparata in anticipo, il gestore la vedrà appena si registra con questa email, senza passare dal wizard. Se gliene servono altre, puoi assegnargliele in seguito da "Modifica".
                     </p>
@@ -373,26 +396,38 @@ export default function GestioneLicenze({ onLogout }) {
                   const limiteRaggiunto = limite != null && assegnate.length >= limite
                   const scelte = new Set(assegnate.map(a => a.id))
                   const disponibili = tutteAziende.filter(a => !scelte.has(a.id))
+                  const moduliGestore = [['rischi', 'Rischi', 'mod_rischi'], ['procedure', 'Procedure', 'mod_procedure'], ['governance', 'Governance', 'mod_governance']]
+                    .filter(([k]) => form['incl_' + k])
                   return (
                     <div className="form-group">
                       <label className="form-label">Aziende assegnate ({assegnate.length}{limite != null ? ` / ${limite}` : ''})</label>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                         {assegnate.length === 0 && <div style={{ fontSize: 12.5, color: '#999' }}>Nessuna azienda assegnata.</div>}
                         {assegnate.map(a => (
-                          <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#F7F8FA', borderRadius: 6 }}>
-                            <span style={{ flex: 1, fontSize: 13 }}>{a.nome}</span>
+                          <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#F7F8FA', borderRadius: 6, flexWrap: 'wrap' }}>
+                            <span style={{ flex: '1 0 auto', fontSize: 13 }}>{a.nome}</span>
                             {!modal.user_id && <span className="badge" style={{ background: '#EAF2FC', color: '#2B5FA5', fontSize: 10.5 }}>in attesa di registrazione</span>}
+                            {moduliGestore.map(([k, l, campo]) => (
+                              <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#666', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={a[campo] !== false} onChange={e => aggiornaModuloAssegnazione(a, campo, e.target.checked)} /> {l}
+                              </label>
+                            ))}
                             <button className="btn btn-sm btn-danger" onClick={() => rimuoviAssegnazione(a)} title="Togli">✕</button>
                           </div>
                         ))}
                       </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <select className="form-control" value={aziendaScelta} onChange={e => setAziendaScelta(e.target.value)} disabled={limiteRaggiunto}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <select className="form-control" style={{ flex: '1 1 200px' }} value={aziendaScelta} onChange={e => setAziendaScelta(e.target.value)} disabled={limiteRaggiunto}>
                           <option value="">— Scegli un'azienda —</option>
                           {disponibili.map(a => (
                             <option key={a.id} value={a.id}>{a.nome}{etichettaAzienda[a.id] ? ` — già di: ${etichettaAzienda[a.id]}` : ''}</option>
                           ))}
                         </select>
+                        {aziendaScelta && moduliGestore.map(([k, l]) => (
+                          <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={moduliScelta[k]} onChange={e => setModuliScelta(m => ({ ...m, [k]: e.target.checked }))} /> {l}
+                          </label>
+                        ))}
                         <button className="btn btn-sm" onClick={assegnaAzienda} disabled={!aziendaScelta || limiteRaggiunto || assegnando}>
                           {assegnando ? '…' : '+ Assegna'}
                         </button>
