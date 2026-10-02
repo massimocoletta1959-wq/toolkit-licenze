@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import GestioneLicenze from './pages/GestioneLicenze'
+import LogAccessi from './pages/LogAccessi'
 
 export default function App() {
   const [session, setSession] = useState(undefined)
   const [proprietario, setProprietario] = useState(undefined) // undefined=verifica in corso, true/false=esito
+  const [vista, setVista] = useState('licenze') // 'licenze' | 'accessi'
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
@@ -50,5 +52,6 @@ export default function App() {
     </div>
   )
 
-  return <GestioneLicenze onLogout={logout} />
+  if (vista === 'accessi') return <LogAccessi onIndietro={() => setVista('licenze')} />
+  return <GestioneLicenze onLogout={logout} onAccessi={() => setVista('accessi')} />
 }

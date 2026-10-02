@@ -18,7 +18,7 @@ const FORM_VUOTO = {
   data_scadenza: '', note: '',
 }
 
-export default function GestioneLicenze({ onLogout }) {
+export default function GestioneLicenze({ onLogout, onAccessi }) {
   const [gestori, setGestori] = useState([])
   const [aziendePerGestore, setAziendePerGestore] = useState({}) // user_id -> [{id,nome,_linkId}]
   const [preassegnazioniPerGestore, setPreassegnazioniPerGestore] = useState({}) // gestore_id -> [{id,nome,_linkId}], per chi non si è ancora registrato
@@ -265,6 +265,7 @@ export default function GestioneLicenze({ onLogout }) {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" onClick={apriNuovo}>+ Nuovo gestore</button>
+          <button className="btn" onClick={onAccessi}>📊 Registro accessi</button>
           <button className="btn" onClick={onLogout}>Esci</button>
         </div>
       </div>
