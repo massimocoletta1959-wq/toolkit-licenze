@@ -52,6 +52,16 @@ export default function LogAccessi({ onIndietro }) {
   }, [])
   useEffect(() => { carica() }, [carica])
 
+  // Azzera la verifica in due passaggi di un utente che ha perso o cambiato il telefono (funzione azzera-mfa,
+  // registrata in mfa_azzeramenti): al prossimo accesso la riattiva con un nuovo codice QR.
+  const azzeraVerifica = async (u) => {
+    const motivo = window.prompt(`Azzerare la verifica in due passaggi di ${u.email}?\n\nAl prossimo accesso dovrà attivarla di nuovo con il telefono.\n\nMotivo:`, 'Telefono perso o sostituito')
+    if (motivo === null) return
+    const { data, error } = await supabase.functions.invoke('azzera-mfa', { body: { utente_id: u.user_id, motivo } })
+    if (error || data?.errore) { window.alert(`Azzeramento non riuscito: ${data?.errore || error.message}`); return }
+    window.alert(`Verifica azzerata per ${u.email} (${data.fattori_rimossi} dispositivo/i rimosso/i).`)
+  }
+
   const caricaEventi = useCallback(async () => {
     setLoadingEventi(true)
     const { data, error } = await supabase.rpc('admin_log_accessi', { p_user: sel?.user_id || null, p_giorni: giorni })
@@ -127,7 +137,8 @@ export default function LogAccessi({ onIndietro }) {
                     <td style={{ textAlign: 'center' }}>{u.accessi_30gg}</td>
                     <td style={{ textAlign: 'center' }}>{Number(u.sessioni_attive) > 0 ? <span title="Sessioni aperte">🟢 {u.sessioni_attive}</span> : '—'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="btn btn-sm" onClick={() => setSel(sel?.user_id === u.user_id ? null : u)}>{sel?.user_id === u.user_id ? 'Tutti' : 'Dettaglio'}</button>
+                      <button className="btn btn-sm" onClick={() => setSel(sel?.user_id === u.user_id ? null : u)}>{sel?.user_id === u.user_id ? 'Tutti' : 'Dettaglio'}</button>{' '}
+                      <button className="btn btn-sm" title="Azzera la verifica in due passaggi (telefono perso o cambiato)" onClick={() => azzeraVerifica(u)}>Azzera 2 passaggi</button>
                     </td>
                   </tr>
                 ))}

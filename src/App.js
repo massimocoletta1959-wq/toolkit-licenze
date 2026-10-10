@@ -3,25 +3,30 @@ import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import GestioneLicenze from './pages/GestioneLicenze'
 import LogAccessi from './pages/LogAccessi'
+import VerificaDueFattori, { livelloAccesso } from './components/VerificaDueFattori'
 
 export default function App() {
   const [session, setSession] = useState(undefined)
   const [proprietario, setProprietario] = useState(undefined) // undefined=verifica in corso, true/false=esito
   const [vista, setVista] = useState('licenze') // 'licenze' | 'accessi'
+  const [richiedeMfa, setRichiedeMfa] = useState(false) // sessione senza il secondo passaggio (aal1)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Verifica in due passaggi obbligatoria: il database risponde solo a sessioni aal2
+    const aggiorna = async (session) => {
+      setRichiedeMfa(!!session && (await livelloAccesso()) !== 'aal2')
       setSession(session)
       if (!session) setProprietario(undefined)
-    })
+    }
+    supabase.auth.getSession().then(({ data: { session } }) => aggiorna(session))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { aggiorna(session) })
     return () => subscription.unsubscribe()
   }, [])
 
   useEffect(() => {
-    if (!session) return
+    if (!session || richiedeMfa) return
     supabase.rpc('is_proprietario').then(({ data }) => setProprietario(!!data))
-  }, [session])
+  }, [session, richiedeMfa])
 
   async function logout() {
     await supabase.auth.signOut()
@@ -34,6 +39,8 @@ export default function App() {
   )
 
   if (!session) return <Login />
+
+  if (richiedeMfa) return <VerificaDueFattori email={session.user.email} onVerificato={() => setRichiedeMfa(false)} onEsci={logout} />
 
   if (proprietario === undefined) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
