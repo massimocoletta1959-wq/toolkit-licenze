@@ -378,12 +378,13 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                       ))}
                     </select>
                     {aziendaScelta && (
-                      <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
-                        {[['rischi', 'Rischi'], ['procedure', 'Procedure'], ['governance', 'Governance'], ['finanza', 'Finanza']].filter(([k]) => form['incl_' + k]).map(([k, l]) => (
+                      <div style={{ display: 'flex', gap: 14, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {[['rischi', 'Rischi'], ['procedure', 'Procedure'], ['governance', 'Governance'], ['finanza', 'Finanza e Controllo']].filter(([k]) => form['incl_' + k]).map(([k, l]) => (
                           <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, cursor: 'pointer' }}>
                             <input type="checkbox" checked={moduliScelta[k]} onChange={e => setModuliScelta(m => ({ ...m, [k]: e.target.checked }))} /> {l}
                           </label>
                         ))}
+                        <span style={{ fontSize: 11.5, color: '#8A94A0' }}>(compaiono i moduli inclusi nella licenza, più sotto)</span>
                       </div>
                     )}
                     <p style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>
@@ -469,7 +470,12 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                   <div style={{ display: 'flex', gap: 16 }}>
                     {[['incl_rischi', 'Rischi'], ['incl_procedure', 'Procedure'], ['incl_governance', 'Governance'], ['incl_finanza', 'Finanza e Controllo']].map(([k, l]) => (
                       <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13.5, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={form[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.checked }))} /> {l}
+                        <input type="checkbox" checked={form[k]} onChange={e => {
+                          const attivo = e.target.checked
+                          setForm(f => ({ ...f, [k]: attivo }))
+                          // il modulo incluso (o tolto) nella licenza vale anche per l'azienda da assegnare
+                          setModuliScelta(m => ({ ...m, [k.replace('incl_', '')]: attivo }))
+                        }} /> {l}
                       </label>
                     ))}
                   </div>
