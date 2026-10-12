@@ -55,7 +55,8 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
     ])
     if (eG) { setErrore(eG.message); setLoading(false); return }
     setGestori(g || [])
-    setTutteAziende(az || [])
+    // in ordine alfabetico, come in tutti gli elenchi di scelta
+    setTutteAziende([...(az || [])].sort((x, y) => (x.nome || '').localeCompare(y.nome || '', 'it', { sensitivity: 'base' })))
     const aziendeById = Object.fromEntries((az || []).map(a => [a.id, a]))
     const mappa = {}
     ;(ua || []).forEach(r => {
@@ -438,6 +439,11 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                           {assegnando ? '…' : '+ Assegna'}
                         </button>
                       </div>
+                      {assegnate.length > 0 && !limiteRaggiunto && (
+                        <p style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>
+                          Nell'elenco non compai{assegnate.length === 1 ? 'e l\'azienda già assegnata' : `ono le ${assegnate.length} aziende già assegnate`} a questo gestore.
+                        </p>
+                      )}
                       {limiteRaggiunto && (
                         <p style={{ fontSize: 12, color: '#B9770E', marginTop: 4 }}>
                           Limite di {limite} aziend{limite === 1 ? 'a' : 'e'} raggiunto per questo gestore: aumenta il limite qui sotto per assegnarne altre.
