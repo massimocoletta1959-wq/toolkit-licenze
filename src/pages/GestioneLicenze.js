@@ -39,6 +39,8 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
   const [inviata, setInviata] = useState(false)
   const [rinviando, setRinviando] = useState(null) // id del gestore a cui si sta rinviando l'invito
   const [rinviatoId, setRinviatoId] = useState(null) // id del gestore a cui è appena stato rinviato con successo
+  const [messaggioInvito, setMessaggioInvito] = useState('') // messaggio personale nell'email di invito
+  const [reinvio, setReinvio] = useState(null) // gestore a cui rinviare l'invito (finestra con il messaggio)
   const [aziendaScelta, setAziendaScelta] = useState('') // azienda selezionata nel picker (creazione o assegnazione)
   const [moduliScelta, setModuliScelta] = useState({ rischi: true, procedure: true, governance: true, finanza: false }) // moduli da concedere sulla nuova assegnazione
   const [assegnando, setAssegnando] = useState(false)
@@ -95,7 +97,7 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
   function apriNuovo() {
     setModal('nuovo'); setForm(FORM_VUOTO)
     setEmailCerca(''); setUtenteTrovato(null); setCercaErrore(null)
-    setPreRegistrazione(false); setInviata(false); setNonTrovato(false)
+    setPreRegistrazione(false); setInviata(false); setNonTrovato(false); setMessaggioInvito('')
     setAziendaScelta(''); setModuliScelta({ rischi: true, procedure: true, governance: true, finanza: false })
   }
 
@@ -174,10 +176,10 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
         if (e2) { setErrore('Gestore creato, ma assegnazione azienda non riuscita: ' + e2.message); setSaving(false); load(); return }
       }
       if (!err) {
-        const { error: eInvito } = await supabase.functions.invoke('invita-gestore', {
-          body: { email: payload.email, ragione_sociale: payload.ragione_sociale },
+        const { data: dInvito, error: eInvito } = await supabase.functions.invoke('invita-gestore', {
+          body: { email: payload.email, ragione_sociale: payload.ragione_sociale, messaggio: messaggioInvito },
         })
-        if (eInvito) { setErrore('Gestore creato, ma invio invito fallito: ' + eInvito.message); setSaving(false); load(); return }
+        if (eInvito || !dInvito?.successo) { setErrore('Gestore creato, ma invio invito fallito: ' + (eInvito?.message || 'il servizio email non ha accettato il messaggio')); setSaving(false); load(); return }
         setInviata(true)
       }
     } else if (modal === 'nuovo') {
@@ -229,13 +231,14 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
     load()
   }
 
-  async function rinviaInvito(g) {
+  async function rinviaInvito(g, messaggio) {
+    setReinvio(null)
     setRinviando(g.id); setErrore(null)
-    const { error } = await supabase.functions.invoke('invita-gestore', {
-      body: { email: g.email, ragione_sociale: g.ragione_sociale },
+    const { data, error } = await supabase.functions.invoke('invita-gestore', {
+      body: { email: g.email, ragione_sociale: g.ragione_sociale, messaggio },
     })
     setRinviando(null)
-    if (error) { setErrore('Invio invito fallito: ' + error.message); return }
+    if (error || !data?.successo) { setErrore('Invio invito fallito: ' + (error?.message || 'il servizio email non ha accettato il messaggio')); return }
     setRinviatoId(g.id)
     setTimeout(() => setRinviatoId(null), 4000)
   }
@@ -307,7 +310,7 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                       <td style={{ fontSize: 12.5 }}>{g.data_scadenza ? new Date(g.data_scadenza).toLocaleDateString('it-IT') : '—'}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {!g.user_id && (
-                          <button className="btn btn-sm" onClick={() => rinviaInvito(g)} disabled={rinviando === g.id} style={{ marginRight: 6 }}>
+                          <button className="btn btn-sm" onClick={() => { setMessaggioInvito(''); setReinvio(g) }} disabled={rinviando === g.id} style={{ marginRight: 6 }}>
                             {rinviando === g.id ? '…' : rinviatoId === g.id ? '✓ Inviato' : '✉️ Rinvia invito'}
                           </button>
                         )}
@@ -480,6 +483,14 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                     ))}
                   </div>
                 </div>
+                {preRegistrazione && (
+                  <div className="form-group">
+                    <label className="form-label">Messaggio personale nell'email di invito (facoltativo)</label>
+                    <textarea className="form-control" rows={4} maxLength={2000} value={messaggioInvito} onChange={e => setMessaggioInvito(e.target.value)}
+                      placeholder="Es. Cara Emanuela, come d'accordo ti ho attivato Pmi 360° con Teknosteel già pronta. Ci sentiamo per la prima configurazione. Un saluto, Massimo" />
+                    <div style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>Compare nell'email in un riquadro in evidenza, sotto il saluto.</div>
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Note</label>
                   <textarea className="form-control" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
@@ -498,6 +509,26 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                 <button className="btn btn-primary" onClick={() => setModal(null)}>Chiudi</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {reinvio && (
+        <div className="modal-overlay" onClick={() => setReinvio(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Rinvia l'invito</h3>
+              <button className="btn btn-icon" onClick={() => setReinvio(null)}>✕</button>
+            </div>
+            <p style={{ fontSize: 14, color: '#555', marginBottom: 12 }}>A: <strong>{reinvio.ragione_sociale}</strong> &lt;{reinvio.email}&gt;</p>
+            <div className="form-group">
+              <label className="form-label">Messaggio personale (facoltativo)</label>
+              <textarea className="form-control" rows={5} maxLength={2000} autoFocus value={messaggioInvito} onChange={e => setMessaggioInvito(e.target.value)}
+                placeholder="Es. Ciao, ti rimando l'invito: il precedente potrebbe essere finito nello spam. Un saluto, Massimo" />
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setReinvio(null)}>Annulla</button>
+              <button className="btn btn-primary" onClick={() => rinviaInvito(reinvio, messaggioInvito)}>✉️ Rinvia invito</button>
+            </div>
           </div>
         </div>
       )}
