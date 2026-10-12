@@ -21,6 +21,8 @@ const FORM_VUOTO = {
 export default function GestioneLicenze({ onLogout, onAccessi }) {
   const [gestori, setGestori] = useState([])
   const [aziendePerGestore, setAziendePerGestore] = useState({}) // user_id -> [{id,nome,_linkId}]
+  const [aperto, setAperto] = useState(null) // id del gestore di cui si vede l'elenco delle aziende
+  const [spostaVerso, setSpostaVerso] = useState({}) // _linkId -> id del gestore di destinazione
   const [preassegnazioniPerGestore, setPreassegnazioniPerGestore] = useState({}) // gestore_id -> [{id,nome,_linkId}], per chi non si è ancora registrato
   const [tutteAziende, setTutteAziende] = useState([]) // tutte le aziende esistenti, candidate per l'assegnazione
   const [etichettaAzienda, setEtichettaAzienda] = useState({}) // azienda_id -> nome di chi la ha già (per non assegnarla per errore due volte)
@@ -49,9 +51,9 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
     setLoading(true); setErrore(null)
     const [{ data: g, error: eG }, { data: ua }, { data: az }, { data: pre }] = await Promise.all([
       supabase.from('gestori').select('*').order('ragione_sociale'),
-      supabase.from('utente_aziende').select('id, utente_id, azienda_id, mod_rischi, mod_procedure, mod_governance, mod_finanza'),
+      supabase.from('utente_aziende').select('*'),
       supabase.from('aziende').select('id, nome'),
-      supabase.from('gestori_preassegnazioni').select('id, gestore_id, azienda_id, mod_rischi, mod_procedure, mod_governance, mod_finanza'),
+      supabase.from('gestori_preassegnazioni').select('*'),
     ])
     if (eG) { setErrore(eG.message); setLoading(false); return }
     setGestori(g || [])
@@ -62,7 +64,7 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
     ;(ua || []).forEach(r => {
       if (!mappa[r.utente_id]) mappa[r.utente_id] = []
       const a = aziendeById[r.azienda_id]
-      if (a) mappa[r.utente_id].push({ id: a.id, nome: a.nome, _linkId: r.id, mod_rischi: r.mod_rischi, mod_procedure: r.mod_procedure, mod_governance: r.mod_governance, mod_finanza: r.mod_finanza })
+      if (a) mappa[r.utente_id].push({ id: a.id, nome: a.nome, _linkId: r.id, ruolo: r.ruolo, dal: r.created_at, mod_rischi: r.mod_rischi, mod_procedure: r.mod_procedure, mod_governance: r.mod_governance, mod_finanza: r.mod_finanza })
     })
     setAziendePerGestore(mappa)
     // Aziende già assegnate (o pre-assegnate) a un gestore, ma il cui account non è
@@ -72,7 +74,7 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
     ;(pre || []).forEach(r => {
       if (!mappaPre[r.gestore_id]) mappaPre[r.gestore_id] = []
       const a = aziendeById[r.azienda_id]
-      if (a) mappaPre[r.gestore_id].push({ id: a.id, nome: a.nome, _linkId: r.id, mod_rischi: r.mod_rischi, mod_procedure: r.mod_procedure, mod_governance: r.mod_governance, mod_finanza: r.mod_finanza })
+      if (a) mappaPre[r.gestore_id].push({ id: a.id, nome: a.nome, _linkId: r.id, inAttesa: true, dal: r.created_at, mod_rischi: r.mod_rischi, mod_procedure: r.mod_procedure, mod_governance: r.mod_governance, mod_finanza: r.mod_finanza })
     })
     setPreassegnazioniPerGestore(mappaPre)
     // Un'azienda spesso viene prima creata e configurata dallo Studio con il proprio
@@ -212,13 +214,33 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
     load()
   }
 
-  async function rimuoviAssegnazione(a) {
-    if (modal === 'nuovo') return
-    if (!window.confirm(`Togliere "${a.nome}" a questo gestore?`)) return
+  async function rimuoviAssegnazione(a, gestore = modal) {
+    if (!gestore || gestore === 'nuovo') return
+    if (!window.confirm(`Togliere "${a.nome}" a ${gestore.ragione_sociale || 'questo gestore'}?\n\nL'azienda e i suoi dati restano: il gestore non la vedrà più.`)) return
     setErrore(null)
-    const tabella = modal.user_id ? 'utente_aziende' : 'gestori_preassegnazioni'
+    const tabella = gestore.user_id ? 'utente_aziende' : 'gestori_preassegnazioni'
     const { error } = await supabase.from(tabella).delete().eq('id', a._linkId)
     if (error) { setErrore(error.message); return }
+    load()
+  }
+
+  // Corregge un'assegnazione fatta al gestore sbagliato: collega l'azienda al gestore giusto con gli stessi
+  // moduli e solo dopo la toglie a quello di partenza (se il primo passo non riesce non si perde nulla).
+  async function spostaAssegnazione(a, da, versoId) {
+    const verso = gestori.find(x => x.id === versoId)
+    if (!verso) return
+    const giaDiVerso = verso.user_id ? (aziendePerGestore[verso.user_id] || []) : (preassegnazioniPerGestore[verso.id] || [])
+    if (giaDiVerso.some(x => x.id === a.id)) { setErrore(`${verso.ragione_sociale} ha già "${a.nome}": toglila soltanto a ${da.ragione_sociale}.`); return }
+    if (!window.confirm(`Spostare "${a.nome}" da ${da.ragione_sociale} a ${verso.ragione_sociale}, con gli stessi moduli?`)) return
+    setErrore(null)
+    const moduli = { mod_rischi: a.mod_rischi !== false, mod_procedure: a.mod_procedure !== false, mod_governance: a.mod_governance !== false, mod_finanza: a.mod_finanza !== false }
+    const ins = verso.user_id
+      ? await supabase.from('utente_aziende').insert({ utente_id: verso.user_id, azienda_id: a.id, ...moduli })
+      : await supabase.from('gestori_preassegnazioni').insert({ gestore_id: verso.id, azienda_id: a.id, ...moduli })
+    if (ins.error) { setErrore('Spostamento non riuscito: ' + ins.error.message); return }
+    const del = await supabase.from(da.user_id ? 'utente_aziende' : 'gestori_preassegnazioni').delete().eq('id', a._linkId)
+    if (del.error) { setErrore(`L'azienda è stata assegnata a ${verso.ragione_sociale}, ma non è stato possibile toglierla a ${da.ragione_sociale}: ${del.error.message}`) }
+    setSpostaVerso(m => ({ ...m, [a._linkId]: '' }))
     load()
   }
 
@@ -294,8 +316,14 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                   const aziende = g.user_id ? (aziendePerGestore[g.user_id] || []) : (preassegnazioniPerGestore[g.id] || [])
                   const st = STATO_STYLE[g.stato] || STATO_STYLE.attivo
                   return (
-                    <tr key={g.id}>
-                      <td style={{ fontWeight: 600 }}>{g.ragione_sociale || '—'}</td>
+                    <React.Fragment key={g.id}>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>
+                        <button type="button" onClick={() => setAperto(aperto === g.id ? null : g.id)} title="Mostra le aziende del gestore"
+                          style={{ all: 'unset', cursor: 'pointer', color: '#1A3A5C', textDecoration: 'underline', textDecorationColor: '#C9D6E6' }}>
+                          {aperto === g.id ? '▾' : '▸'} {g.ragione_sociale || '—'}
+                        </button>
+                      </td>
                       <td style={{ fontSize: 12.5, color: '#666' }}>{g.email || '—'}</td>
                       <td>{g.piano || '—'}</td>
                       <td>
@@ -322,6 +350,56 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                         <button className="btn btn-sm btn-danger" onClick={() => eliminaGestore(g)}>🗑️ Elimina</button>
                       </td>
                     </tr>
+                    {aperto === g.id && (
+                      <tr>
+                        <td colSpan={8} style={{ background: '#F7F9FC', padding: '10px 16px 14px' }}>
+                          {aziende.length === 0 ? (
+                            <div style={{ fontSize: 13, color: '#888' }}>Nessuna azienda assegnata o creata da questo gestore.</div>
+                          ) : (
+                            <table style={{ width: '100%', fontSize: 12.5 }}>
+                              <thead>
+                                <tr style={{ color: '#5f6b7a' }}>
+                                  <th style={{ textAlign: 'left', background: 'none', color: '#5f6b7a' }}>Azienda</th>
+                                  <th style={{ textAlign: 'left', background: 'none', color: '#5f6b7a' }}>Stato</th>
+                                  <th style={{ textAlign: 'left', background: 'none', color: '#5f6b7a' }}>Moduli concessi</th>
+                                  <th style={{ textAlign: 'left', background: 'none', color: '#5f6b7a' }}>Condivisa con</th>
+                                  <th style={{ background: 'none' }}></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {aziende.map(a => {
+                                  const altri = gestori.filter(x => x.id !== g.id && (x.user_id ? (aziendePerGestore[x.user_id] || []) : (preassegnazioniPerGestore[x.id] || [])).some(y => y.id === a.id)).map(x => x.ragione_sociale)
+                                  const moduli = [a.mod_rischi !== false && 'Rischi', a.mod_procedure !== false && 'Procedure', a.mod_governance !== false && 'Governance', a.mod_finanza !== false && 'Finanza'].filter(Boolean)
+                                  return (
+                                    <tr key={a._linkId}>
+                                      <td style={{ fontWeight: 600 }}>{a.nome}</td>
+                                      <td>
+                                        {a.inAttesa
+                                          ? <span className="badge" style={{ background: '#EAF2FC', color: '#2B5FA5' }}>in attesa di registrazione</span>
+                                          : <span className="badge" style={{ background: '#EAFAF1', color: '#1E8449' }}>attiva{a.ruolo === 'membro' ? ' · come membro' : ''}</span>}
+                                        {a.dal && <span style={{ color: '#8A94A0', marginLeft: 6 }}>dal {new Date(a.dal).toLocaleDateString('it-IT')}</span>}
+                                      </td>
+                                      <td style={{ color: '#555' }}>{moduli.join(', ') || '—'}</td>
+                                      <td style={{ color: '#555' }}>{altri.join(', ') || '—'}</td>
+                                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                        <select className="form-control" style={{ display: 'inline-block', width: 'auto', fontSize: 12, padding: '3px 6px', marginRight: 6 }}
+                                          value={spostaVerso[a._linkId] || ''} onChange={e => setSpostaVerso(m => ({ ...m, [a._linkId]: e.target.value }))} aria-label={`Sposta ${a.nome} a un altro gestore`}>
+                                          <option value="">Sposta a…</option>
+                                          {gestori.filter(x => x.id !== g.id).map(x => <option key={x.id} value={x.id}>{x.ragione_sociale}</option>)}
+                                        </select>
+                                        <button className="btn btn-sm" disabled={!spostaVerso[a._linkId]} onClick={() => spostaAssegnazione(a, g, spostaVerso[a._linkId])} style={{ marginRight: 6 }}>Sposta</button>
+                                        <button className="btn btn-sm btn-danger" onClick={() => rimuoviAssegnazione(a, g)}>Togli</button>
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   )
                 })}
               </tbody>
@@ -402,7 +480,6 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                   const limite = form.max_aziende === '' ? null : Number(form.max_aziende)
                   const limiteRaggiunto = limite != null && assegnate.length >= limite
                   const scelte = new Set(assegnate.map(a => a.id))
-                  const disponibili = tutteAziende.filter(a => !scelte.has(a.id))
                   const moduliGestore = [['rischi', 'Rischi', 'mod_rischi'], ['procedure', 'Procedure', 'mod_procedure'], ['governance', 'Governance', 'mod_governance'], ['finanza', 'Finanza', 'mod_finanza']]
                     .filter(([k]) => form['incl_' + k])
                   return (
@@ -426,8 +503,10 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                         <select className="form-control" style={{ flex: '1 1 200px' }} value={aziendaScelta} onChange={e => setAziendaScelta(e.target.value)} disabled={limiteRaggiunto}>
                           <option value="">— Scegli un'azienda —</option>
-                          {disponibili.map(a => (
-                            <option key={a.id} value={a.id}>{a.nome}{etichettaAzienda[a.id] ? ` — già di: ${etichettaAzienda[a.id]}` : ''}</option>
+                          {tutteAziende.map(a => (
+                            <option key={a.id} value={a.id} disabled={scelte.has(a.id)}>
+                              {a.nome}{scelte.has(a.id) ? ' — già assegnata a questo gestore' : etichettaAzienda[a.id] ? ` — già di: ${etichettaAzienda[a.id]}` : ''}
+                            </option>
                           ))}
                         </select>
                         {aziendaScelta && moduliGestore.map(([k, l]) => (
@@ -439,11 +518,6 @@ export default function GestioneLicenze({ onLogout, onAccessi }) {
                           {assegnando ? '…' : '+ Assegna'}
                         </button>
                       </div>
-                      {assegnate.length > 0 && !limiteRaggiunto && (
-                        <p style={{ fontSize: 12, color: '#8A94A0', marginTop: 4 }}>
-                          Nell'elenco non compai{assegnate.length === 1 ? 'e l\'azienda già assegnata' : `ono le ${assegnate.length} aziende già assegnate`} a questo gestore.
-                        </p>
-                      )}
                       {limiteRaggiunto && (
                         <p style={{ fontSize: 12, color: '#B9770E', marginTop: 4 }}>
                           Limite di {limite} aziend{limite === 1 ? 'a' : 'e'} raggiunto per questo gestore: aumenta il limite qui sotto per assegnarne altre.
